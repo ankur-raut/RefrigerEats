@@ -201,7 +201,7 @@ if (st.button("Submit")):
             # res = llm(f"what are the 3 recipes mentioned in give output in json format strictly {response}")
             res = llm(f"return the names of 3 recipes mentioned in {response} in a list format")
             print(res)
-            st.write(res)
+            # st.write(res)
             recipes_list = res.splitlines()
             images = []
             res_li = []
