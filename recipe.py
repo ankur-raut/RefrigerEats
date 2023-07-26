@@ -16,8 +16,20 @@ from PIL import Image
 from io import BytesIO
 import urllib.request
 import json
+from langchain.prompts import (
+    PromptTemplate,
+    ChatPromptTemplate,
+    HumanMessagePromptTemplate,
+)
+from langchain.llms import OpenAI
+from langchain.chat_models import ChatOpenAI
+from langchain.output_parsers import PydanticOutputParser
+from pydantic import BaseModel, Field, validator
+from typing import List
 
 st.title("RefrigerEats")
+
+mod = None
 
 with st.sidebar:
     with st.form('Cohere/OpenAI'):
@@ -33,7 +45,9 @@ if api_key:
     if model == 'OpenAI':
         os.environ["OPENAI_API_KEY"] = api_key
         os.environ["REPLICATE_API_TOKEN"] = rep_key
-        llm = OpenAI(temperature=0.3)
+        model_name = "gpt-3.5-turbo"
+        temperature = 0.0
+        model = OpenAI(model_name=model_name, temperature=temperature)
         mod = 'OpenAI'
     elif model == 'Cohere':
         os.environ["Cohere_API_KEY"] = api_key
@@ -172,75 +186,150 @@ if (st.button("Submit")):
             # output = "tomatoes, cucumbers, carrots, peppers, onions, lettuce, broccoli, cabbage, carrots, tomatoes, broccoli, cabbage, carrots"
             st.write("These are the Ingredients present:")
             st.write(output)
-            input_txt = f"""
-            suggest top 3 recipes that can be made from ingredients list. also consider the recipe should be\
-            {Taste} in taste, {vegOrNon} and the cuisine should be {cuisine} strictly.
-            1. For the first recipe, select one important ingredient from the list and propose a recipe centered around it.
-            2. The second recipe should be a combination of all the ingredients in the list.
-            3. Lastly, suggest a recipe that harmoniously combines the vegetables from the list with the essence of authentic {vegOrNon} and {cuisine} cuisine.
-            Format:
-            ```Recipe Name:```
-            ```Ingredients:```
-            ```Steps:```
-            Follow the Format strictly as mentioned and all 3 keys should always be present.
-            ingredients = {output}
-            Each recipe should be in new line and strictly do not give numbering to new lines.
-            Do not end your output with lines somethins like :Let me know if you have any other questions!. \
-            Just give the recipe and end your output.
-            """
-            st.write("Here are the top 3 recipes that can be made from the ingredients available")
-            response = llm(input_txt)
-            recipes = response.split('\n\n')
-            txt=""
-            for recipe in recipes:
-                st.markdown(recipe)
-                st.markdown("---")
-                txt += recipe
-            # st.write(recipes)
-            print(response)
-            # res = llm(f"what are the 3 recipes mentioned in give output in json format strictly {response}")
-            res = llm(f"return the names of 3 recipes mentioned in {response} in a list format")
-            print(res)
-            # st.write(res)
-            recipes_list = res.splitlines()
-            images = []
-            res_li = []
-            for i in recipes_list:
-                if i:
+            if(mod==Cohere):
+                input_txt = f"""
+                suggest top 3 recipes that can be made from ingredients list. also consider the recipe should be\
+                {Taste} in taste, {vegOrNon} and the cuisine should be {cuisine} strictly.
+                1. For the first recipe, select one important ingredient from the list and propose a recipe centered around it.
+                2. The second recipe should be a combination of all the ingredients in the list.
+                3. Lastly, suggest a recipe that harmoniously combines the vegetables from the list with the essence of authentic {vegOrNon} and {cuisine} cuisine.
+                Format:
+                ```Recipe Name:```
+                ```Ingredients:```
+                ```Steps:```
+                Follow the Format strictly as mentioned and all 3 keys should always be present.
+                ingredients = {output}
+                Each recipe should be in new line and strictly do not give numbering to new lines.
+                Do not end your output with lines somethins like :Let me know if you have any other questions!. \
+                Just give the recipe and end your output.
+                """
+                st.write("Here are the top 3 recipes that can be made from the ingredients available")
+                response = llm(input_txt)
+                recipes = response.split('\n\n')
+                txt=""
+                for recipe in recipes:
+                    st.markdown(recipe)
+                    st.markdown("---")
+                    txt += recipe
+                # st.write(recipes)
+                print(response)
+                # res = llm(f"what are the 3 recipes mentioned in give output in json format strictly {response}")
+                res = llm(f"return the names of 3 recipes mentioned in {response} in a list format")
+                print(res)
+                # st.write(res)
+                recipes_list = res.splitlines()
+                images = []
+                res_li = []
+                for i in recipes_list:
+                    if i:
+                        print(i)
+                        prompt = f"""
+                        I am making a cooking book and I need to generate images for my recipes.
+                        The name of the recipe is {i}.
+                        Make a realistic simple image of the recipe using these ingredients.
+                        """
+                        res_li.append(i)
+                        images.append(imageGen(prompt))
+                # res = json.loads(res)
+                # recipe = recipe(res)
+                # st.write(recipe)
+                # img = images(res)
+                # img = [img[0] for img in img]
+                images = [image[0] for image in images]
+                cnt = 0
+                for i in images:
+                    url = i
+                    response = requests.get(url)
+                    if response.status_code == 200:
+                        with open(f"out{cnt}.png", "wb") as f:
+                            f.write(response.content)
+                    cnt = cnt+1
+
+                for i, j in zip(res_li,images):
+                    st.write(i)
+                    st.image(j)
+                    st.write(" ")
+                
+                print(res_li)
+            else:
+                # Here's another example, but with a compound typed field.
+                class Actor(BaseModel):
+                #     name: str = Field(description="name of an actor")
+                #     film_names: List[str] = Field(description="list of names of films they starred in")
+                    # filmography: List[List[str]] = Field(description="name of an actor and list of names of 2 films they starred in")
+                    recipe: List[dict] = Field(description="Recipe Name and the ingrdients list")
+                    steps: List[dict] = Field(description="Steps to make this Recipe")
+
+                # ingredients = ["tomatoes, cucumbers, carrots, peppers, onions, lettuce, broccoli, cabbage, carrots, tomatoes, broccoli, cabbage, carrots"]
+                actor_query = f"Generate the 3 recipes with steps based on {output} and italian cuisin and Veg"
+
+                parser = PydanticOutputParser(pydantic_object=Actor)
+
+                prompt = PromptTemplate(
+                    template="Answer the user query.\n{format_instructions}\n{query}\n",
+                    input_variables=["query"],
+                    partial_variables={"format_instructions": parser.get_format_instructions()},
+                )
+
+                _input = prompt.format_prompt(query=actor_query)
+
+                output = model(_input.to_string())
+
+                out = parser.parse(output)
+                recipe = []
+                ingredients = []
+                steps = []
+                # cnt = 1
+                for i,j in zip(out.recipe,out.steps):
+                    recipe.append(i['name'])
+                    ingredients.append(i['ingredients'])
+                    steps.append(j['description'])
+                
+                images = []
+                for i in recipe:
                     print(i)
                     prompt = f"""
                     I am making a cooking book and I need to generate images for my recipes.
                     The name of the recipe is {i}.
                     Make a realistic simple image of the recipe using these ingredients.
                     """
-                    res_li.append(i)
                     images.append(imageGen(prompt))
-            # res = json.loads(res)
-            # recipe = recipe(res)
-            # st.write(recipe)
-            # img = images(res)
-            # img = [img[0] for img in img]
-            images = [image[0] for image in images]
-            cnt = 0
-            for i in images:
-                url = i
-                response = requests.get(url)
-                if response.status_code == 200:
-                    with open(f"out{cnt}.png", "wb") as f:
-                        f.write(response.content)
-                cnt = cnt+1
-
-            for i, j in zip(res_li,images):
-                st.write(i)
-                st.image(j)
-                st.write(" ")
+                
+                images = [image[0] for image in images]
+                cnt = 0
+                for i in images:
+                    url = i
+                    response = requests.get(url)
+                    if response.status_code == 200:
+                        with open(f"out{cnt}.png", "wb") as f:
+                            f.write(response.content)
+                    cnt = cnt+1
+                txt = ""
+                for i,j,k,l in zip(recipe,ingredients,steps,images):
+                    st.write(f"Dish Name: {i}")
+                    st.write("Ingredients:")
+                    txt += i
+                    for z in j:
+                        st.write(z)
+                        txt += z
+                    st.write("Steps:")
+                    cnt=1
+                    for a in k.split('\n'):
+                        st.write(f"{cnt}. {a}")
+                        cnt +=1
+                        txt += a
+                    st.image(l)
+                    st.write(" ")
+                res_li = recipe
+                
             
-            print(res_li)
             img_list=['out0.png','out1.png','out2.png']
             generate_pdf(txt,res_li,img_list)
             st.write("PDF generated successfully! Click below to download.")
             with open("output.pdf", "rb") as f:
                 st.download_button("Download PDF", f.read(), file_name="output.pdf", mime="application/pdf")
+                
+
     else:
         st.write("Please upload file")
 
